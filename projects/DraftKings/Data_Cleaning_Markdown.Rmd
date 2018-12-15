@@ -7,19 +7,86 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir = "nfl_stuff")
 require(tidyverse)
 require(ggthemes)
 require(data.table)
 require(zoo)
+require(tm)
 require(lubridate)
 ```
 
-```{r}
-fread("Combined.Player.Box.csv") %>% 
+```{r, source}
+source("./functions/cleaning.R")
+```
+
+
+```{r, load data}
+read_csv("./data/raw/Combined.Player.Box.csv") %>% 
   {.} ->player_box
 ```
 
-```{r, make RB whitelist}
+```{r, make team name maps}
+all_team_names <- unique(player_box$Team)
+clean_team_name <- c("San Diego Chargers", "Arizona Cardinals",
+                         "Cincinnati Bengals", "Oakland Raiders",
+                         "Indianapolis Colts", "Pittsburgh Steelers",
+                         "Tampa Bay Buccaneers", "Tennessee Titans",
+                         "New York Jets", "Denver Broncos", "Miami Dolphins",                 
+                         "Philadelphia Eagles", "St. Louis Rams", "San Francisco 49ers",
+                         "Kansas City Chiefs", "Los Angeles Rams",  "Detroit Lions",  
+                         "Baltimore Ravens",  "New Orleans Saints","New England Patriots",
+                         "Green Bay Packers", "New York Giants", "Cleveland Browns",
+                         "Atlanta Falcons", "Jacksonville Jaguars", "Chicago Bears",
+                         "Minnesota Vikings", NA, "Houston Oilers", "Houston Texans",
+                         "Washington Redskins", "Dallas Cowboys","Seattle Seahawks",             
+                          "St. Louis Cardinals","Phoenix Cardinals","Buffalo Bills",                
+                         "Carolina Panthers", "Los Angeles Raiders", "Baltimore Colts",
+                         "Los Angeles Chargers", NA,"Los Angeles Rams", NA, NA, 
+                         "Tennessee Oilers", NA, NA)
+team_name_map <- data.frame("Team" = all_team_names,
+                            "team" = clean_team_name)
+team_name_map %>% 
+  copy() %>% 
+  setnames(c("Opposing_Team", "opp_team"))%>% 
+  {.} -> opp_team_map
+```
+
+```{r fix names}
+nameposition = vector()
+unique_names = as.character(unique(player_box$Name))
+for (i in 1:length(unique_names)) {
+  nameposition[i] = max(gregexpr("\\.", unique_names[i])[[1]])
+}
+
+unique_names_fixed = vector()
+for (i in 1:length(unique_names)) {
+  unique_names_fixed[i] = substr(unique_names[i], 1, nameposition[i] - 2)
+}
+
+unique_names_fixed_no_punc = removePunctuation(unique_names_fixed)
+
+unique_names_fixed_no_spaces = vector()
+for (i in 1:length(unique_names_fixed_no_punc)) {
+  unique_names_fixed_no_spaces[i] = gsub(" ", "_", unique_names_fixed_no_punc[i])
+}
+
+unique_names_lower = tolower(unique_names_fixed_no_spaces)
+
+names_mapping = melt(data.frame(unique_names, unique_names_lower))
+colnames(names_mapping) <- c('wrong', 'correct')
+
+player_box = left_join(player_box, 
+                       names_mapping, 
+                       by = c('Name' = 'wrong'))
+
+
+player_box$Name = player_box$correct
+player_box$correct = NULL
+```
+
+
+```{r, make RB whitelist, warning= F, message = F}
 player_box %>% 
   mutate(carries = as.integer(RB_Att),
          targets = as.integer(WR_Tar)) %>% 
@@ -34,6 +101,77 @@ player_box %>%
   unique() %>% 
   {.} -> RB_whitelist
 
-RB_whitelist$is_RB <- rep(1, length(RB_whitelist))
+RB_whitelist_df <- data.frame("player" = RB_whitelist,
+                           "position" = rep("RB", length(RB_whitelist)))
 ```
+
+```{r, make QB whitelist}
+player_box %>% 
+  mutate(passing_yards = as.numeric(QB_Yds),
+         other_yards = as.numeric(RB_Yds) + as.numeric(WR_Yds)) %>% 
+  group_by(Season, Name, Team) %>% 
+  summarise(season_passing_yards = sum(passing_yards, na.rm = T),
+            season_rush_receiving_yards = sum(other_yards, na.rm = T)) %>%
+  filter(season_rush_receiving_yards < season_passing_yards) %>% 
+  filter(season_passing_yards > 100) %>% 
+  ungroup() %>%
+  dplyr::select(Name) %>% 
+  unlist() %>%
+  unique() %>% 
+  {.} -> QB_whitelist
+
+QB_whitelist_df <- data.frame("player" = QB_whitelist,
+                           "position" = rep("QB", length(QB_whitelist)))
+```
+
+```{r, warning = F, message = F, final cleaning pipe}
+
+column_classes <- c("char", "int", "int", "date",
+                    "char", "char", "bool", "char",
+                    rep("num", 18))
+
+columns_to_fix_nas <- c("QB_Att", "QB_Cmp", "QB_Yds",
+                        "QB_TD",   "QB_Int",  "QB_Lg",
+                        "QB_Sack", "RB_Att",  "RB_Yds", 
+                        "RB_Lg",   "RB_TD",  "WR_Rec",
+                        "WR_Yds", "WR_Lg",  "WR_TD",
+                        "WR_FD",   "WR_Tar",  "WR_YAC")
+
+player_box$Home.Away <- player_box$Home.Away == "Home"
+
+  
+player_box %>% 
+  dplyr::select(-one_of("X1", "QB_YPA", "QB_Rate", "QB_Loss",
+                        "WR_Avg", "RB_Avg", "RB_FD")) %>% 
+  data.frame() %>% 
+  set_col_classes(column_classes) %>% 
+  fix_NAS(columns_to_fix_nas) %>% 
+  setnames(c("player", "season", "week", "game_date", 
+             "Team", "Opposing_Team", "is_home", "player_game_id",
+             "pass_attempts", "completions", "pass_yds", "pass_td",
+             "int", "long_pass", "sacks", "rush_attempts", "rush_yds",
+             "long_rush", "rush_td", "receptions", "rec_yd", "long_reception",
+             "rec_td", "rec_first_downs", "rec_targets", "YAC")) %>% 
+  left_join(RB_whitelist_df, by = "player") %>% 
+  left_join(QB_whitelist_df, by = "player") %>% 
+  mutate(position = case_when(
+    position.y == "QB" ~ "QB",
+    position.x == "RB" ~ "RB",
+    TRUE ~ "WR/TE"
+  )) %>% 
+  dplyr::select(-one_of("position.x", "position.y")) %>% 
+  left_join(team_name_map, by = "Team") %>% 
+  filter(!is.na(Team)) %>% 
+  dplyr::select(-one_of("Team")) %>% 
+  left_join(opp_team_map, by = "Opposing_Team") %>% 
+  dplyr::select(-one_of("Opposing_Team")) %>% 
+  mutate(player_game_id = paste(player, season, week, sep = "_")) %>% 
+  {.} -> cleaned_data
+```
+```{r write out data}
+cleaned_data %>% glimpse
+
+write.csv(cleaned_data, "./data/derived/player_box_scores.csv")
+```
+
 
