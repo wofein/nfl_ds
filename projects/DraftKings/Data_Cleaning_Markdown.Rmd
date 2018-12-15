@@ -1,0 +1,39 @@
+---
+title: "Data_Cleaning_Markdown"
+author: "Will Fein"
+date: "12/15/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+require(tidyverse)
+require(ggthemes)
+require(data.table)
+require(zoo)
+require(lubridate)
+```
+
+```{r}
+fread("Combined.Player.Box.csv") %>% 
+  {.} ->player_box
+```
+
+```{r, make RB whitelist}
+player_box %>% 
+  mutate(carries = as.integer(RB_Att),
+         targets = as.integer(WR_Tar)) %>% 
+  group_by(Season, Name, Team) %>% 
+  summarise(season_targets = sum(targets, na.rm = T),
+            season_carries = sum(carries, na.rm = T)) %>%
+  filter(season_targets < season_carries) %>% 
+  filter(season_carries > 10) %>% 
+  ungroup() %>%
+  dplyr::select(Name) %>% 
+  unlist() %>%
+  unique() %>% 
+  {.} -> RB_whitelist
+
+RB_whitelist$is_RB <- rep(1, length(RB_whitelist))
+```
+
