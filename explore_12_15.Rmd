@@ -1,0 +1,72 @@
+---
+title: "explore_12_15"
+author: "Will Fein"
+date: "12/15/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+require(tidyverse)
+require(ggthemes)
+require(data.table)
+require(zoo)
+require(lubridate)
+```
+
+```{r}
+fread("Combined.Player.Box.csv") %>% 
+  {.} ->player_box
+````
+
+
+```{r}
+
+```
+
+
+```{r}
+NFL_TEAMS <- c("San Diego ChargersSan Diego", "Arizona CardinalsArizona" ,Cincinnati BengalsCincinnati,Oakland RaidersOakland,Indianapolis ColtsIndianapolis,Pittsburgh SteelersPittsburgh,Tampa Bay BuccaneersTampa Bay,Tennessee TitansTennessee,New York JetsNY Jets,Denver BroncosDenver,Miami DolphinsMiami,Philadelphia EaglesPhiladelphia,St. Louis RamsSt. Louis,San Francisco 49ersSan Francisco,Kansas City ChiefsKansas City,Los Angeles RamsLA Rams,Detroit LionsDetroit,Baltimore RavensBaltimore,New Orleans SaintsNew Orleans,New England PatriotsNew England,Green Bay PackersGreen Bay,New York GiantsNY Giants,Cleveland BrownsCleveland,Atlanta FalconsAtlanta,Jacksonville JaguarsJacksonville,Chicago BearsChicago,Minnesota VikingsMinnesota,Montreal AlouettesMontreal,Houston OilersHouston,Houston TexansHouston,Washington RedskinsWashington,Dallas CowboysDallas,Seattle SeahawksSeattle,St. Louis CardinalsSt. Louis,Phoenix CardinalsPhoenix,Buffalo BillsBuffalo,Carolina PanthersCarolina,Los Angeles RaidersLA Raiders,Baltimore ColtsBaltimore,Los Angeles ChargersLA Chargers,Toronto ArgonautsToronto,Los Angeles RamsLos Angeles,Saskatchewan RoughridersSaskatchewan,Calgary StampedersCalgary,Tennessee OilersTennessee,)
+
+
+
+player_box %>% 
+  mutate(targets = as.integer(WR_Tar)) %>% 
+  group_by(Season, Name, Team) %>% 
+  summarise(targets = sum(targets, na.rm = T)) %>%
+  ungroup() %>% 
+  group_by(Season, Team) %>% 
+  summarise(max_targets = max(targets, na.rm = T)) %>% 
+  filter(max_targets > 0) %>% 
+  {.} -> max_targets
+
+player_box %>% 
+  mutate(targets = as.integer(WR_Tar)) %>% 
+  group_by(Season, Name, Team) %>% 
+  summarise(targets = sum(targets, na.rm = T)) %>%
+  left_join(max_targets, by = c("Season", "Team")) %>% 
+  mutate(WR1 = !is.na(max_targets) & targets == max_targets) %>% 
+  filter(WR1) %>% 
+  arrange(targets*-1) %>% 
+  dplyr::select(Season, Team, Name, targets)
+```
+
+```{r, make RB whitelist}
+player_box %>% 
+  mutate(carries = as.integer(RB_Att),
+         targets = as.integer(WR_Tar)) %>% 
+  group_by(Season, Name, Team) %>% 
+  summarise(season_targets = sum(targets, na.rm = T),
+            season_carries = sum(carries, na.rm = T)) %>%
+  filter(season_targets < season_carries) %>% 
+  filter(season_carries > 10) %>% 
+  ungroup() %>%
+  dplyr::select(Name) %>% 
+  unlist() %>%
+  unique() %>% 
+  {.} -> RB_whitelist
+
+RB_whitelist$is_RB <- rep(1, length(RB_whitelist))
+```
+
+
